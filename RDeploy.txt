@@ -1,0 +1,346 @@
+VAGRANT
+-------
+
+1. Dodavanje novih vagrant boxeva:
+vagrant box add {title} {url} # 3rd party
+vagrant box add ubuntu/trusty32 # official
+
+1a. List boxes:
+vagrant box list
+2. Kreiranje cfg fajla:
+vagrant init # moze i sa imenom box-a, onda ne mora da se edituje Vagrantfile
+
+3. Editovanje Vagrantfile:
+config.vm.box = "ubuntu/trusty32" # title boxa
+
+4. Pokretanje vagranta:
+vagrant up # u folderu gde stoji Vagrantfile
+
+5. Povezivanje na VM:
+vagrant ssh
+
+6. Brisanje vagrant vm:
+vagrant destroy (--force)
+
+6. VBOX Guest addition troubleshooting:
+   (u principu radi i sa starijom ver, ovo moze i da zezne vbox)
+
+   # Download iso (naziv je obicno vezan za verziju VBOX)
+   mkdir vbox
+   wget --continue --output-document \
+   vbox/VBoxGuestAdditions_4.1.12.iso\ # target
+   http://download.virtualbox.org/virtualbox/4.1.12/VBoxGuestAdditions_4.1.12.iso # url
+
+   # Install
+   sudo mount -o loop /vagrant/VBoxGuestAdditions.iso vbox/
+   sudo vbox/VBoxLinuxAdditions.run
+   exit
+
+   vagrant reload
+
+7. SSH povezivanje (ono sto vagrant radi, def password = vagrant):
+ssh -p 2222 \
+-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+-i ~/.vagrant.d/insecure_private_key vagrant@localhost  # ovo je ssh key, da ne bi morao da stalno kucas password
+
+
+SOFTWARE SETUP:
+---------------
+
+# Update pkg
+sudo apt-get update -y
+
+# Install dev libs, compile stuff
+sudo apt-get install build-essential zlib1g-dev libssl-dev libreadline-dev \
+  git-core curl libyaml-dev libcurl4-gnutls-dev libsqlite3-dev apache2-dev -y
+
+# Download Ruby source ( curl --remote-name da sacuva file pod istim imenom kao i server )
+curl --remote-name http://ftp.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p194.tar.gz
+
+# Instalacija ruby
+tar zxf ruby-1.9.3-p194.tar.gz
+cd ruby-1.9.3-p194/
+./configure
+make
+sudo make install
+
+ruby -v # provera
+
+# Pakovanje podesenog VM u novi vagrant box: (package.box)
+vagrant package
+
+# Dodavanje novog box-a i rename:
+vagrant box add precise64_with_ruby193 package.box
+
+
+CONFIGURACIJA VBOX:
+-------------------
+
+VBoxManage --help # alat za konfiguraciju vbox
+>> modifyvm - podesavanje VM <uuid|name>
+
+# Vagrantfile, ovde pristupamo VBoxManage preko ruby
+# DEPRECATED
+#config.vm.customize ["modifyvm", :id, "--name", "app", "--memory", "512"]
+
+# Provider umesto vm.customize:
+# .provider NERADI, koristi bez provider!!!
+config.vm.provider "virtualbox" do |vb|
+  vb.customize ["modifyvm", :id, "--name", "app", "--memory", "512"]
+end
+
+# Hostname, bitno za puppet
+#config.vm.host_name = "ime"
+config.vm.hostname = "ime" # novo
+
+# Port forwarding 22(guest/nasa masina), 2222(vagrant)
+#config.vm.port_forward 22, 2222, :auto => true # p22 = ssh, auto ukoliko je port nedostupan pronadji slobodan port
+#config.vm.port_forward 80, 4567 # ovo je port za website
+
+# Port_forwarding: nova komanda
+config.vm.network "port_forward", guest: 80, host:8080
+
+# SSH Port forwarding:
+# ovo resava neki bug sa ssh:
+config.vm.network :port_forward, id: "ssh", guest: 22, host: 2222
+
+# Network
+# Podesavanje tipa mreze (hostonly)
+# Ip adresa: preporuceno je da pocinje sa 33.33.*
+# DEPRECATED
+#config.vm.network :hostonly, "33.33.13.37"
+
+# :private_network, zamena za :hostonly
+# Private networks allow you to access your guest machine by some address that is not publicly accessible from the global internet.
+config.vm.network :private_network, ip: "33.33.33.33"
+
+# Share folder Vagrant
+# A share_folder setting specifies a descriptive label,
+# the destination path of the directory on the VM, and the path to the source
+# directory (relative to the Vagrantfile ).
+# ....share_folder "label", "/VM/destination", "/source/"
+config.vm.share_folder "hosttmp", "/hosttmp", "/tmp"
+
+# Synced_folder > ZAMENA ZA SHARE_FOLDER!
+# masina , vm dir
+config.vm.synced_folder "src/", "/srv/website"
+
+# Definisanje naziva vagrant vm:
+config.vm.define :naziv do |naziv_config| do
+
+
+# ERROR CHECK
+VAGRANT_INFO=debug vagrant up # ili bilo koja druga vagrant commanda
+vagrant up --debug # alternativa
+
+
+
+PUPPET
+******
+
+# Instalacija
+# Package:
+wget https://apt.puppetlabs.com/puppetlabs-release-precise.deb
+sudo dpkg -i puppetlabs-release-precise.deb
+sudo apt-get update
+
+# Gem install:
+There are two steps to installing Puppet as a gem. First we need to create a
+user and group for Puppet to use. We won’t need to log in as the puppet user,
+so we’ll set the shell to /bin/false .
+
+sudo useradd --comment "Puppet" --no-create-home \
+  --system --shell /bin/false puppet
+
+sudo gem install puppet -v 2.7.12 --no-rdoc --no-ri
+
+puppet --version
+facter --version
+
+# Facter
+# Prikazuje informacije o VM, ili masini
+facter
+
+# PUPET DOKUMENTACIJA
+puppet describe service # ime
+
+# PUPPET CONFIG
+# naziv.pp > file
+# Ovim se podesava $PATH za executable
+#
+# Adding the following contents
+# ensures that Puppet can find the binaries for our Ruby and RubyGems
+# installations.
+#
+# Svi manifest fajlovi se nalaze u manifests/
+Exec {
+  path => "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
+# START PUPPET
+# Pokrece puppet, verbose vise info, target file je drugi parametar
+# Procitati dokumentaciju zbog deprecated upozorenja
+puppet apply --verbose manifests/site.pp
+
+# PACKAGE
+# Oznacava koji program zelimo da bude instaliran na systemu.
+# Dosta stvari puppet radi automatski u zavisnosti od distribucije.
+package {
+  "apache2": # naziv, bitan je tacan naziv
+  ensure => present # obezbedi da packet bude instaliran, prisutan na sistemu
+  ensure => installed # izgleda da je isto sto i gornje
+}
+
+# SERVICE
+# omogucava podesavanje service na masini
+# Najcesce se koristi da se obezbedi da odredjeni serveru budu startovani
+# ili podeseni da se startuju on boot
+service {
+  "apache2":
+  ensure => true, # pokreni servis, ukoliko vec nije pokrenut
+  ensure => running # isto sto i gornje
+  enable => true # pokreni servis prilikom bootovanja
+}
+
+# FILE
+# Koristi se za konfiguracione fajlove:
+# Source ucitava cfg koji su prosledjeni sa puppet-om.
+# source kopira authorative file preko target file.
+file {
+  "/etc/apache2/apache2.conf": # full path
+  source => "puppet:///modules/apache2/apache2.conf", # glavni fajl sa kojim se uporedjuju ostali cfg (authorative cfg file)
+  mode  => 644, # rwx unix
+  owner => root,
+  group => root
+}
+
+
+# PUPPET MODULES
+# Koriste se za organizaciju
+# Karakteristike:
+1. nalaze se u modules/
+2. dir ima naziv service / resouce that it provides
+3. module mora da sadrzi init.pp,
+   modules/module_name/manifests/init.pp
+4. svaki module mora da bude includovan u main manifest file:
+   include apache2
+5. Mora da se definise klasa za module:
+   Our new Apache module’s init.pp needs to declare a Puppet class as a container
+   for the module’s resources.
+   class apache2 {}
+6. Exec - se ne nalazi u module, vec u main manifest file
+
+# PUPPET DEPENDENCY
+# Ovde je bitno da se napomene da order nije bitan u manifest file za puppet.
+# Ukoliko nam je bitan redosled izvrsavanja komandi onda se koriste relationship metaparameters (ensure, before, notify, require)
+
+# Za package
+# Ovo obezbedjuje proveru da trazeni fajl postoji (odnosno da je installirana app)
+before => File["/path/to/file"]
+
+# SUBSCRIBE
+# Za service
+# Ovo prati fajl i cim se dogodi promena reloaduje resource
+subscribe => File["/etc/apache2/apache2.conf"]
+
+# NOTIFY
+# Ovo nije bas najbolje objasnjeno.
+# Causes a resource to be applied before the target resource. The target resource will refresh if the notifying resource changes.
+notify => Service["apache2"] # ili bilo koji resource
+
+# REQUIRE
+# Causes a resource to be applied after the target resource.
+require => Package["apache2"]
+
+
+# MYSQL
+# Bazom se administrira uz pomoc mysql a ne rake.
+# To daje neku fleksibilnost. (user, password, limitiranje pristupa itd..)
+sudo apt-get install mysql-server -y # enter password
+cp /etc/mysql/my.cnf modules/mysql/files/ # iskopiraj default cfg fajl za mysql
+
+#MYSQL se sastoji od package, file, service i na kraju exec resource:
+exec {
+  "mysql_password":
+  unless => "mysqladmin -uroot -proot status",
+  command => "mysqladmin -uroot password root",
+  require => Service[mysql];
+
+  "massiveapp_db":
+  unless => "mysql -uroot -proot massiveapp_production",
+  command => "mysql -uroot -proot -e 'create database massiveapp_production'",
+  require => Exec["mysql_password"]
+}
+
+
+# UNLESS/COMMAND
+# Neka vrsta kondicionalne logike.
+unless => "nesto"
+command => "izvrsi ukoliko unless=false"
+require => Service[mysql] # izvrsi pre ostatka bloka
+
+
+# RAILS APP DIR TREE
+# MASSIVE APP
+# init.pp za massiveapp:
+1. file (ovde je prikazan kao [], prvi je vezan za dir structure),
+2. file (za database.yml),
+3. package (koji se odnosi na ruby gem, provider parametar daje mogucnost biranja package manager (dpkg, rpm, itd.. radi i za ruby))
+
+
+# PUPPET PASSENGER
+# Vrsi se podesavanje passengera. (gem, install passenger, passenger.conf)
+1. unless na kraju koji dovodi do toga da se gem install izvrsava samo ako je unless false.
+2. alias = da li je ovo puppet alias ili tipican bash alias?
+3. passenger.conf file za apache2
+4. postoji neki bug gde prijavljuje error za LS, to se resava tako sto se daje full path za ls: /bin/ls
+
+PASSENGER:
+----------
+LoadModule passenger_module \
+/usr/local/lib/ruby/gems/1.9.1/gems/passenger-3.0.11/ext/apache2/mod_passenger.so # modul za apache2
+PassengerRoot /usr/local/lib/ruby/gems/1.9.1/gems/passenger-3.0.11 # install od gema
+PassengerRuby /usr/local/bin/ruby # ruby path
+
+PassengerUseGlobalQueue on  # enables Passenger to hold pending HTTP
+# requests in a queue and wait until an application instance is available.
+# This prevents one or two slow requests from tying up subsequent requests.
+
+PassengerMaxPoolSize 5 # helps cap Passenger resource usage. If a server is
+# getting too many requests, Passenger will reject the request rather than
+# spinning up application instances until it runs out of memory.
+
+PassengerPoolIdleTime 900 # tells Passenger to shut down unused application
+# instances after the indicated interval.
+
+PassengerMaxRequests 10000 # provides memory leak recovery. With this setting in
+# place, Passenger will restart an application instance after it has served the
+# indicated number of requests. This continual recycling of instances helps
+# keep memory leaks from becoming an issue.
+
+
+
+
+# PUPPET CLI COMMANDS:
+----------------------
+--verbose > vise info
+--noop > no operation, ne izvrsavaj operacuju iz manifesta
+--show_diff > diff za konfiguracione fajlove
+puppet apply --verbose --noop --show_diff # primer koji prikazuje sta bi bilo uradjeno DA JE pokrenut puppet
+
+
+# DPKG
+------
+# Ubuntu package manager
+# .deb
+dpkg -i naziv.deb # instalacija
+dpkg -R dirname/ # instalira sve pkg iz foldera
+dpkg -r ime_pkg # uninstall package (ostavlja config fajlove)
+dpkg -P ime_pkg # uninstall package (BRISE config fajlove)
+dpkg -l # list slicno kao i gore
+dpkg -L ime # prikazi gde su instalirani fajlovi od pkg
+dpkg -c ime.deb # prikazi sadrzaj .deb fajla
+dpkg -S /bin/netstat # prikazi koji package je owner fajla
+dpkg -p ime # prikazi informazije o pkg, verzija, arhitektura itd...
+dpkg -s ime | grep Status # proveri da li je neki package instaliran
+

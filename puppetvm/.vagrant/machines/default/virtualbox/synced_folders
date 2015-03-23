@@ -1,0 +1,1 @@
+{"virtualbox":{"/etc/puppet":{"guestpath":"/etc/puppet","hostpath":"/home/spleen/Vagrant/massiveapp_ops","disabled":false},"/vagrant":{"guestpath":"/vagrant","hostpath":"/home/spleen/Vagrant/puppetvm","disabled":false}}}
